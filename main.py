@@ -21,15 +21,16 @@ app = FastAPI(title="Optimized Journal STT")
 
 # PRODUCTION SETTINGS - Choose based on your hardware
 # Option 1: CPU (Windows safe)
-MODEL_SIZE = "large-v3"
-DEVICE = "cpu"
-COMPUTE_TYPE = "int8"
-NUM_THREADS = 4
+# MODEL_SIZE = "large-v3"
+# DEVICE = "cpu"
+# COMPUTE_TYPE = "int8"
+# NUM_THREADS = 4
 
 # Option 2: GPU (if available) - MUCH faster and more accurate
-# MODEL_SIZE = "large-v3"
-# DEVICE = "cuda"
-# COMPUTE_TYPE = "float16"
+MODEL_SIZE = "large-v3"
+DEVICE = "cuda"
+COMPUTE_TYPE = "float16"
+NUM_THREADS = 4
 
 logger.info(f"Loading Whisper model: {MODEL_SIZE} on {DEVICE}")
 model = WhisperModel(
