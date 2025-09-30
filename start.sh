@@ -24,6 +24,6 @@ else
 fi
 
 # ✅ Start FastAPI using uvicorn
-PORT=${PORT:-8081}
+PORT=${PORT:-7860}
 echo "🚀 Launching FastAPI on port $PORT ..."
 exec uvicorn main:app --host 0.0.0.0 --port $PORT
