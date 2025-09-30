@@ -9,16 +9,22 @@ python3 -m pip install --no-cache-dir -r requirements.txt
 if [ ! -d "/root/.cache/huggingface" ]; then
     echo "🔄 Downloading Whisper model (${MODEL_SIZE:-large-v3})..."
     python3 - <<'PY'
-from faster_whisper import WhisperModel
 import os
-model = WhisperModel(
-    os.getenv("MODEL_SIZE", "large-v3"),
-    device=os.getenv("DEVICE", "cpu"),
-    compute_type=os.getenv("COMPUTE_TYPE", "int8"),
-    cpu_threads=int(os.getenv("NUM_THREADS", "4"))
-)
-print("✅ Whisper model ready.")
+from faster_whisper import WhisperModel
+
+device = os.getenv("DEVICE", "cpu")
+compute_type = os.getenv("COMPUTE_TYPE", "int8")
+model_size = os.getenv("MODEL_SIZE", "large-v3")
+num_threads = int(os.getenv("NUM_THREADS", "4"))
+
+kwargs = dict(device=device, compute_type=compute_type)
+if device == "cpu":
+    kwargs["cpu_threads"] = num_threads  # only on CPU
+
+WhisperModel(model_size, **kwargs)
+print(f"✅ Whisper model ready on {device} ({compute_type}).")
 PY
+
 else
     echo "✅ Whisper model already cached."
 fi

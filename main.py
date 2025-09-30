@@ -32,13 +32,20 @@ DEVICE = "cuda"
 COMPUTE_TYPE = "float16"
 NUM_THREADS = 4
 
+# logger.info(f"Loading Whisper model: {MODEL_SIZE} on {DEVICE}")
+# model = WhisperModel(
+#     MODEL_SIZE, 
+#     device=DEVICE, 
+#     compute_type=COMPUTE_TYPE,
+#     cpu_threads=NUM_THREADS if DEVICE == "cpu" else None
+# )
+
 logger.info(f"Loading Whisper model: {MODEL_SIZE} on {DEVICE}")
-model = WhisperModel(
-    MODEL_SIZE, 
-    device=DEVICE, 
-    compute_type=COMPUTE_TYPE,
-    cpu_threads=NUM_THREADS if DEVICE == "cpu" else None
-)
+_model_kwargs = dict(device=DEVICE, compute_type=COMPUTE_TYPE)
+if DEVICE == "cpu":
+    _model_kwargs["cpu_threads"] = NUM_THREADS  # only on CPU
+model = WhisperModel(MODEL_SIZE, **_model_kwargs)
+
 
 # Thread pool for CPU-intensive audio processing
 thread_pool = ThreadPoolExecutor(max_workers=2)
