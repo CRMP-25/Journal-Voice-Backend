@@ -80,12 +80,12 @@ class OptimizedAudioProcessor:
                     # Gentle gate threshold
                     threshold = noise_level * 1.5
                     # Soft gate (reduces, doesn't eliminate)
-                    audio = np.where(np.abs(audio) < threshold, audio * 0.3, audio)
+                    audio = np.where(np.abs(audio) < threshold, audio * 0.7, audio) 
             except Exception as e:
                 logger.debug(f"Noise gate skipped: {e}")
             
             # Very gentle compression for consistency
-            compressed = np.tanh(audio * 1.2) * 0.8
+            compressed = audio       
             
             # Final normalization
             if np.max(np.abs(compressed)) > 0:
@@ -478,20 +478,22 @@ def optimized_transcribe(
                 segment_audio,
                 language=language,
                 vad_filter=False,
-                temperature=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5],
-                beam_size=8,
-                best_of=8,
-                patience=1.0,
+                # Deterministic first pass:
+                temperature=0.0,
+                beam_size=5,                     # 5 is a good balance
+                best_of=None,                    # only used for sampling; disable here
+                patience=0.0,                    # faster, deterministic
                 length_penalty=1.0,
                 log_prob_threshold=-0.8,
-                no_speech_threshold=0.4,
+                no_speech_threshold=0.6,         # slightly stricter; reduces false positives
                 compression_ratio_threshold=2.4,
-                condition_on_previous_text=False,
+                condition_on_previous_text=True, # let whisper keep intra-utterance context
                 word_timestamps=False,
                 initial_prompt=initial_prompt,
                 repetition_penalty=1.2,
                 no_repeat_ngram_size=3
             )
+
             
             text_parts = []
             confidence_scores = []
@@ -582,6 +584,8 @@ class STTInit(BaseModel):
     hints: Optional[List[str]] = []
     n_best: int = 3
     field_context: Optional[str] = None
+    session_context: Optional[List[str]] = []   # NEW
+
 
 async def ws_safe_send(ws: WebSocket, payload: dict):
     if ws.application_state == WebSocketState.CONNECTED:
@@ -633,16 +637,13 @@ async def stt_websocket(ws: WebSocket):
                     await ws_safe_send(ws, {"type": "error", "message": str(e)})
 
             elif obj.get("type") == "chunk":
-                try:
-                    audio_b64 = obj.get("data")
-                    if audio_b64:
-                        audio, sr = decode_wav_pcm16(audio_b64)
-                        audio_chunks.append((audio, sr))
-                        logger.info(f"Received {len(audio)} samples")
-                        await ws_safe_send(ws, {"type": "chunk_ack"})
-                except Exception as e:
-                    logger.error(f"Chunk error: {e}")
-                    await ws_safe_send(ws, {"type": "error", "message": str(e)})
+                # after appending to audio_chunks…
+                if sum(len(c[0]) for c in audio_chunks) > sr * 0.6:
+                    # quick low-cost partial: small beam, temp 0
+                    audio = np.concatenate([c[0] for c in audio_chunks])[-int(sr*6):]  # last ~6s
+                    partial = optimized_transcribe(audio, sr, language, hints, field_context, n_best=1)[0]
+                    await ws_safe_send(ws, {"type": "partial", "text": partial.get("text","")})
+
 
 
             elif obj.get("type") == "end":
