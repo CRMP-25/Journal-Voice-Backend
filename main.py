@@ -482,7 +482,7 @@ def optimized_transcribe(
                 temperature=0.0,
                 beam_size=5,                     # 5 is a good balance
                 best_of=None,                    # only used for sampling; disable here
-                patience=0.0,                    # faster, deterministic
+                patience=1.0,                     # faster, deterministic
                 length_penalty=1.0,
                 log_prob_threshold=-0.8,
                 no_speech_threshold=0.6,         # slightly stricter; reduces false positives
