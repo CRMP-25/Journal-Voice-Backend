@@ -80,12 +80,12 @@ class OptimizedAudioProcessor:
                     # Gentle gate threshold
                     threshold = noise_level * 1.5
                     # Soft gate (reduces, doesn't eliminate)
-                    audio = np.where(np.abs(audio) < threshold, audio * 0.7, audio) 
+                    audio = np.where(np.abs(audio) < threshold, audio * 0.3, audio)
             except Exception as e:
                 logger.debug(f"Noise gate skipped: {e}")
             
             # Very gentle compression for consistency
-            compressed = audio       
+            compressed = np.tanh(audio * 1.2) * 0.8
             
             # Final normalization
             if np.max(np.abs(compressed)) > 0:
@@ -478,22 +478,20 @@ def optimized_transcribe(
                 segment_audio,
                 language=language,
                 vad_filter=False,
-                # Deterministic first pass:
-                temperature=0.0,
-                beam_size=5,                     # 5 is a good balance
-                best_of=None,                    # only used for sampling; disable here
-                patience=1.0,                     # faster, deterministic
+                temperature=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5],
+                beam_size=8,
+                best_of=8,
+                patience=1.0,
                 length_penalty=1.0,
                 log_prob_threshold=-0.8,
-                no_speech_threshold=0.6,         # slightly stricter; reduces false positives
+                no_speech_threshold=0.4,
                 compression_ratio_threshold=2.4,
-                condition_on_previous_text=True, # let whisper keep intra-utterance context
+                condition_on_previous_text=False,
                 word_timestamps=False,
                 initial_prompt=initial_prompt,
                 repetition_penalty=1.2,
                 no_repeat_ngram_size=3
             )
-
             
             text_parts = []
             confidence_scores = []
@@ -584,8 +582,6 @@ class STTInit(BaseModel):
     hints: Optional[List[str]] = []
     n_best: int = 3
     field_context: Optional[str] = None
-    session_context: Optional[List[str]] = []   # NEW
-
 
 async def ws_safe_send(ws: WebSocket, payload: dict):
     if ws.application_state == WebSocketState.CONNECTED:
@@ -595,8 +591,6 @@ async def ws_safe_send(ws: WebSocket, payload: dict):
 @app.websocket("/ws/stt")
 async def stt_websocket(ws: WebSocket):
     """WebSocket STT endpoint"""
-    sr_current = None  # <- track the sample rate of the stream
-
     await ws.accept()
     logger.info(f"Connection from {ws.client}")
     
@@ -640,49 +634,15 @@ async def stt_websocket(ws: WebSocket):
 
             elif obj.get("type") == "chunk":
                 try:
-                    payload = obj.get("data")
-                    fmt = (obj.get("format") or "wav").lower()
-
-                    if not payload:
-                        await ws_safe_send(ws, {"type": "error", "message": "empty_chunk"})
-                        continue
-
-                    # 1) Decode the incoming base64 WAV (and resample to 16k inside)
-                    chunk_audio, sr_local = decode_wav_pcm16(payload, target_sr=16000)
-
-                    # 2) Initialize sr_current or resample to it for consistency
-                    if sr_current is None:
-                        sr_current = sr_local
-                    if sr_local != sr_current and len(chunk_audio) > 0:
-                        # resample to sr_current
-                        from math import gcd as _gcd
-                        g = _gcd(int(sr_local), int(sr_current))
-                        up = sr_current // g
-                        down = sr_local // g
-                        chunk_audio = signal.resample_poly(chunk_audio, up, down).astype(np.float32)
-                        sr_local = sr_current
-
-                    # 3) Append to buffer
-                    audio_chunks.append((chunk_audio, sr_local))
-
-                    # 4) Acknowledge chunk
-                    await ws_safe_send(ws, {"type": "chunk_ack", "samples": len(chunk_audio)})
-
-                    # 5) (Optional) Emit a quick partial after ~600ms of audio buffered
-                    total_len = sum(len(c[0]) for c in audio_chunks)
-                    if sr_current and total_len > int(sr_current * 0.6):
-                        # take only the last ~6s to keep latency low
-                        combined_tail = np.concatenate([c[0] for c in audio_chunks])[-int(sr_current * 6):]
-                        partial = optimized_transcribe(
-                            combined_tail, sr_current, language, hints, field_context, n_best=1
-                        )[0]
-                        await ws_safe_send(ws, {"type": "partial", "text": partial.get("text", "")})
-
+                    audio_b64 = obj.get("data")
+                    if audio_b64:
+                        audio, sr = decode_wav_pcm16(audio_b64)
+                        audio_chunks.append((audio, sr))
+                        logger.info(f"Received {len(audio)} samples")
+                        await ws_safe_send(ws, {"type": "chunk_ack"})
                 except Exception as e:
-                    logger.error(f"Chunk handling error: {e}")
+                    logger.error(f"Chunk error: {e}")
                     await ws_safe_send(ws, {"type": "error", "message": str(e)})
-
-
 
 
             elif obj.get("type") == "end":
@@ -696,16 +656,15 @@ async def stt_websocket(ws: WebSocket):
                     break
 
                 try:
-                    sr_final = sr_current or (audio_chunks[0][1] if audio_chunks else 16000)
+                    sr = audio_chunks[0][1]
                     combined = np.concatenate([chunk[0] for chunk in audio_chunks])
-
+                    
                     loop = asyncio.get_event_loop()
                     alternatives = await loop.run_in_executor(
                         thread_pool,
                         optimized_transcribe,
-                        combined, sr_final, language, hints, field_context, n_best
+                        combined, sr, language, hints, field_context, n_best
                     )
-
                     
                     await ws_safe_send(ws, {
                         "type": "final",
